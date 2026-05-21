@@ -7,6 +7,9 @@ use anyhow::Result;
 use clap::Parser;
 use inquire::Select;
 use std::path::PathBuf;
+use std::future::Future;
+use std::time::Duration;
+use indicatif::{ProgressBar, ProgressStyle};
 
 use protocol::{send_frame, FrameOutcome, DEFAULT_PORT};
 use panels::parse_panels_file;
@@ -19,7 +22,15 @@ struct Cli {
     #[arg(long, default_value = "panels.txt")]
     panels_file: PathBuf,
 }
-
+async fn with_spinner<F: Future>(message: impl Into<String>, fut: F) -> F::Output {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(ProgressStyle::default_spinner());
+    pb.set_message(message.into());
+    pb.enable_steady_tick(Duration::from_millis(100));
+    let result = fut.await;
+    pb.finish_and_clear();
+    result
+}
 async fn query_status(panel: &str) -> Vec<(&'static str, FrameOutcome)> {
     let queries: [(&str, &[u8]); 4] = [
         ("Power",  b"!000POWR ?\r"),
@@ -34,6 +45,11 @@ async fn query_status(panel: &str) -> Vec<(&'static str, FrameOutcome)> {
 }
 
 async fn run_status_for(targets: Vec<(String, String)>) {
+    let message = if targets.len() == 1 {
+        "Querying panel...".to_string()
+    } else {
+        format!("Querying {} panels...", targets.len())
+    };
     let panel_futures = targets.into_iter().map(|(name, ip)| async move {
         let addr = if ip.contains(':') {
             ip.clone()
@@ -44,7 +60,10 @@ async fn run_status_for(targets: Vec<(String, String)>) {
         (name, ip, results)
     });
 
-    let all = futures::future::join_all(panel_futures).await;
+    let all = with_spinner(
+        message,
+        futures::future::join_all(panel_futures),
+    ).await;
 
     for (name, ip, results) in all {
         println!();

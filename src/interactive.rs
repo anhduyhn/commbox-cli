@@ -7,7 +7,7 @@ pub fn select_panel_targets(panels: &[PanelEntry]) -> Result<Vec<(String, String
     let source_options: Vec<&str> = if panels.is_empty() {
         vec!["Type IP"]
     } else {
-        vec!["Type IP", "Pick from list", "All panels in group"]
+        vec!["Type IP", "Pick from list", "All panels in group", "All panels (every group)"]
     };
 
     let source = Select::new("How to specify panel(s)?", source_options).prompt()?;
@@ -44,6 +44,16 @@ pub fn select_panel_targets(panels: &[PanelEntry]) -> Result<Vec<(String, String
                 anyhow::bail!("No panels in group '{}'", group);
             }
             Ok(in_group)
+        }
+        "All panels (every group)" => {
+            let all: Vec<(String, String)> = panels.iter().map(|p| {
+                let label = p.name.clone().unwrap_or_else(|| p.ip.clone());
+                (label, p.ip.clone())
+            }).collect();
+            if all.is_empty() {
+                anyhow::bail!("Panels file is empty");
+            }
+            Ok(all)
         }
         _ => unreachable!(),
     }
