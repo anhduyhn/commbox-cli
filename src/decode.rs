@@ -14,22 +14,26 @@ fn decode_volume(value: &str) -> String {
         .unwrap_or_else(|_| value.to_string())
 }
 
+pub const INPUT_ALIASES: &[(&str, &str)] = &[
+    ("211", "HDMI 1 (Vivi)"),
+    ("212", "HDMI 2"),
+    ("213", "HDMI 3"),
+    ("214", "HDMI 4"),
+    ("231", "DisplayPort"),
+    ("241", "PC (OPS)"),
+    ("271", "USB-C 1"),
+    ("272", "USB-C 2"),
+    ("411", "Android"),
+    ("111", "VGA"),
+    ("131", "AV"),
+    ("151", "YPbPr"),
+];
+
 fn decode_input(value: &str) -> String {
-    match value.trim() {
-        "111" => "VGA".into(),
-        "131" => "AV".into(),
-        "151" => "YPbPr".into(),
-        "211" => "HDMI 1 (Vivi)".into(),
-        "212" => "HDMI 2".into(),
-        "213" => "HDMI 3".into(),
-        "214" => "HDMI 4".into(),
-        "231" => "DisplayPort".into(),
-        "241" => "PC (OPS)".into(),
-        "271" => "USB-C 1".into(),
-        "272" => "USB-C 2".into(),
-        "411" => "Android".into(),
-        other => other.to_string(),
-    }
+    INPUT_ALIASES.iter()
+        .find(|(code, _)| *code == value.trim())
+        .map(|(_, label)| (*label).to_string())
+        .unwrap_or_else(|| value.to_string())
 }
 
 pub fn format_status_value(label: &str, outcome: &FrameOutcome) -> String {

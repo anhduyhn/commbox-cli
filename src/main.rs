@@ -13,7 +13,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use protocol::{send_frame, FrameOutcome, DEFAULT_PORT};
 use panels::parse_panels_file;
-use decode::{format_status_value, format_set_outcome};
+use decode::{format_status_value, format_set_outcome, INPUT_ALIASES};
 use inquire::validator::Validation;
 use interactive::select_panel_targets;
 
@@ -136,7 +136,7 @@ async fn main() -> Result<()> {
         Vec::new()
     });
 
-    let actions = vec!["Status", "Volume", "Quit"];
+    let actions = vec!["Status", "Volume", "Input", "Quit"];
 
     loop {
         let action = Select::new("What would you like to do?", actions.clone()).prompt()?;
@@ -164,6 +164,21 @@ async fn main() -> Result<()> {
 
                     let frame = format!("!000VOLM {}\r", level);
                     run_set_for(targets, "volume", &level.to_string(), frame).await;
+                }
+                Err(e) => eprintln!("Error: {}", e),
+            },
+            "Input" => match select_panel_targets(&panels) {
+                Ok(targets) => {
+                    let labels: Vec<&str> = INPUT_ALIASES.iter().map(|(_, l)| *l).collect();
+                    let chosen = Select::new("Input?", labels).prompt()?;
+                    let code = INPUT_ALIASES.iter().find(|(_, l)| *l == chosen).unwrap().0;
+
+                    if !confirm_if_many(targets.len(), &format!("Switch input to {}", chosen))? {
+                        continue;
+                    }
+
+                    let frame = format!("!000INPT {}\r", code);
+                    run_set_for(targets, "input", chosen, frame).await;
                 }
                 Err(e) => eprintln!("Error: {}", e),
             },
