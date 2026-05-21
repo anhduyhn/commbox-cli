@@ -49,3 +49,12 @@ pub fn format_status_value(label: &str, outcome: &FrameOutcome) -> String {
         FrameOutcome::Fail(why)     => format!("FAIL ({})", why),
     }
 }
+pub fn format_set_outcome(outcome: &FrameOutcome) -> String {
+    match outcome {
+        FrameOutcome::ResponseOk(r) => format!("OK ({})", extract_value(r)),
+        FrameOutcome::Sent          => "OK (no echo)".to_string(),
+        FrameOutcome::Locked        => "LOCKED".to_string(),
+        FrameOutcome::PanelError(r) => format!("ERR ({})", r),
+        FrameOutcome::Fail(why)     => format!("FAIL ({})", why),
+    }
+}

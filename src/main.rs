@@ -5,7 +5,7 @@ mod interactive;
 
 use anyhow::Result;
 use clap::Parser;
-use inquire::Select;
+use inquire::{Confirm, CustomType, Select};
 use std::path::PathBuf;
 use std::future::Future;
 use std::time::Duration;
@@ -13,7 +13,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use protocol::{send_frame, FrameOutcome, DEFAULT_PORT};
 use panels::parse_panels_file;
-use decode::format_status_value;
+use decode::{format_status_value, format_set_outcome};
+use inquire::validator::Validation;
 use interactive::select_panel_targets;
 
 #[derive(Parser, Debug)]
@@ -77,6 +78,55 @@ async fn run_status_for(targets: Vec<(String, String)>) {
         }
     }
 }
+async fn run_set_for(
+    targets: Vec<(String, String)>,
+    action_label: &str,
+    value_display: &str,
+    frame: String,
+) {
+    let message = if targets.len() == 1 {
+        format!("Setting {} to {}...", action_label, value_display)
+    } else {
+        format!(
+            "Setting {} to {} on {} panels...",
+            action_label, value_display, targets.len()
+        )
+    };
+
+    let panel_futures = targets.into_iter().map(|(name, ip)| {
+        let frame = frame.clone();
+        async move {
+            let addr = if ip.contains(':') {
+                ip.clone()
+            } else {
+                format!("{}:{}", ip, DEFAULT_PORT)
+            };
+            let outcome = send_frame(&addr, frame.as_bytes()).await;
+            (name, ip, outcome)
+        }
+    });
+
+    let all = with_spinner(
+        message,
+        futures::future::join_all(panel_futures),
+    ).await;
+
+    println!();
+    for (name, ip, outcome) in all {
+        let label = if name == ip { ip.clone() } else { format!("{} ({})", name, ip) };
+        println!("  {:30} {}", label, format_set_outcome(&outcome));
+    }
+}
+
+fn confirm_if_many(count: usize, summary: &str) -> Result<bool> {
+    if count <= 5 {
+        return Ok(true);
+    }
+    let confirmed = Confirm::new(&format!("{} on {} panels. Continue?", summary, count))
+        .with_default(false)
+        .prompt()?;
+    Ok(confirmed)
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -86,7 +136,7 @@ async fn main() -> Result<()> {
         Vec::new()
     });
 
-    let actions = vec!["Status", "Quit"];
+    let actions = vec!["Status", "Volume", "Quit"];
 
     loop {
         let action = Select::new("What would you like to do?", actions.clone()).prompt()?;
@@ -94,6 +144,28 @@ async fn main() -> Result<()> {
             "Status" => match select_panel_targets(&panels) {
                 Ok(targets) => run_status_for(targets).await,
                 Err(e)      => eprintln!("Error: {}", e),
+            },
+            "Volume" => match select_panel_targets(&panels) {
+                Ok(targets) => {
+                    let level = CustomType::<u8>::new("Volume level (0-100):")
+                        .with_error_message("Please enter a number")
+                        .with_validator(|v: &u8| {
+                            if *v <= 100 {
+                                Ok(Validation::Valid)
+                            } else {
+                                Ok(Validation::Invalid("Must be 0-100".into()))
+                            }
+                        })
+                        .prompt()?;
+
+                    if !confirm_if_many(targets.len(), &format!("Set volume to {}", level))? {
+                        continue;
+                    }
+
+                    let frame = format!("!000VOLM {}\r", level);
+                    run_set_for(targets, "volume", &level.to_string(), frame).await;
+                }
+                Err(e) => eprintln!("Error: {}", e),
             },
             "Quit" => break,
             _ => unreachable!(),
