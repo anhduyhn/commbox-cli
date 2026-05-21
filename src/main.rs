@@ -1,99 +1,83 @@
+mod protocol;
+mod panels;
+mod decode;
+mod interactive;
+
 use anyhow::Result;
 use clap::Parser;
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio::time::timeout;
+use inquire::Select;
+use std::path::PathBuf;
 
-const READ_TIMEOUT: Duration = Duration::from_millis(800);
-const CONNECTION_TIMEOUT: Duration = Duration::from_millis(2000);
-const DEFAULT_PORT: u16 = 4660;
+use protocol::{send_frame, FrameOutcome, DEFAULT_PORT};
+use panels::parse_panels_file;
+use decode::format_status_value;
+use interactive::select_panel_targets;
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "commbox",
-    version,
-    about = "Query CommBox interactive panels over TCP/4660",
-    after_help = "EXAMPLES:\n  \
-                  commbox 10.128.169.30           # default port 4660\n  \
-                  commbox 10.128.169.30:4660      # explicit port",
-)]
+#[command(name = "commbox", version, about = "CommBox panel control")]
 struct Cli {
-    // Panel's IP Address. Port defaults to 4660 if not provided.
-    #[arg(value_name = "PANEL's IP ADDRESS")]
-    panel: String,
+    #[arg(long, default_value = "panels.txt")]
+    panels_file: PathBuf,
 }
 
-#[derive(Debug)]
-enum FrameOutcome {
-    ResponseOk(String), // panel returned a response
-    Sent, // write succeeded, no response within read timeout
-    Locked, //ERR4 - locked or wrong panel ID
-    PanelError(String), // other ERR response
-    Fail(String), // connect / write / read failure
-}
-
-async fn send_frame(panel: &str, frame: &[u8]) -> FrameOutcome {
-    let mut stream = match timeout(CONNECTION_TIMEOUT, TcpStream::connect(panel)).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => return FrameOutcome::Fail(format!("Connect: {}", e)),
-        Err(_) => return FrameOutcome::Fail("Connection timed out".into()),
-    };
-    if let Err(e) = stream.write_all(frame).await {
-        return FrameOutcome::Fail(format!("Write: {}", e));
-    }
-    if let Err(e) = stream.flush().await {
-        return FrameOutcome::Fail(format!("Flush: {}", e));
-    }
-    let mut buf = [0u8; 256];
-    let n = match timeout(READ_TIMEOUT, stream.read(&mut buf)).await {
-        Ok(Ok(n)) => n,
-        Ok(Err(e)) => return FrameOutcome::Fail(format!("Read: {}", e)),
-        Err(_) => return FrameOutcome::Sent,
-    };
-    let response = String::from_utf8_lossy(&buf[..n]).trim().to_string();
-    if response.is_empty()          {return FrameOutcome::Sent;}
-    if response.contains("ERR4")    {return FrameOutcome::Locked;}
-    if response.contains("ERR")     {return FrameOutcome::PanelError(response);}
-    FrameOutcome::ResponseOk(response)
-}
-
-//Value extractor helper
-fn extract_value(response: &str) -> &str {
-    //Extracts the value in the command "!000VOLM=050" -> "050"
-    response.rsplit_once('=').map(|(_, v)| v.trim()).unwrap_or(response)
-}
-#[tokio::main]
-async fn main() -> Result <()> {
-    let cli = Cli::parse();
-    let panel: String = if cli.panel.contains(':') {
-        cli.panel
-    } else {
-        format!("{}:{}", cli.panel, DEFAULT_PORT)
-    };
-    let panel = panel.as_str();
-
+async fn query_status(panel: &str) -> Vec<(&'static str, FrameOutcome)> {
     let queries: [(&str, &[u8]); 4] = [
-        ("Power", b"!000POWR ?\r"),
+        ("Power",  b"!000POWR ?\r"),
         ("Volume", b"!000VOLM ?\r"),
-        ("Mute", b"!000MUTE ?\r"),
-        ("Input", b"!000INPT ?\r"),
+        ("Mute",   b"!000MUTE ?\r"),
+        ("Input",  b"!000INPT ?\r"),
     ];
-
-    let futures = queries.iter().map(|(label, frame) | async move {
+    let futures = queries.iter().map(|(label, frame)| async move {
         (*label, send_frame(panel, frame).await)
     });
+    futures::future::join_all(futures).await
+}
 
-    let results = futures::future::join_all(futures).await;
+async fn run_status_for(targets: Vec<(String, String)>) {
+    let panel_futures = targets.into_iter().map(|(name, ip)| async move {
+        let addr = if ip.contains(':') {
+            ip.clone()
+        } else {
+            format!("{}:{}", ip, DEFAULT_PORT)
+        };
+        let results = query_status(&addr).await;
+        (name, ip, results)
+    });
 
-    println!("{}", panel);
-    for (label, outcome) in results {
-        match outcome {
-            FrameOutcome::ResponseOk(response)  => println!(" {:6} {}", label, extract_value(&response)),
-            FrameOutcome::Sent                  => println!(" {:6} (no response)", label),
-            FrameOutcome::Locked                => println!(" {:6} LOCKED", label),
-            FrameOutcome::PanelError(response)  => println!(" {:6} ERR: {}", label, response),
-            FrameOutcome::Fail(why)             => println!(" {:6} FAIL: {}", label, why),
+    let all = futures::future::join_all(panel_futures).await;
+
+    for (name, ip, results) in all {
+        println!();
+        if name == ip {
+            println!("{}", ip);
+        } else {
+            println!("{} ({})", name, ip);
+        }
+        for (label, outcome) in results {
+            println!("  {:7} {}", format!("{}:", label), format_status_value(label, &outcome));
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let panels = parse_panels_file(&cli.panels_file).unwrap_or_else(|e| {
+        eprintln!("Note: panels file not loaded ({}). Only 'Type IP' available.", e);
+        Vec::new()
+    });
+
+    let actions = vec!["Status", "Quit"];
+
+    loop {
+        let action = Select::new("What would you like to do?", actions.clone()).prompt()?;
+        match action {
+            "Status" => match select_panel_targets(&panels) {
+                Ok(targets) => run_status_for(targets).await,
+                Err(e)      => eprintln!("Error: {}", e),
+            },
+            "Quit" => break,
+            _ => unreachable!(),
         }
     }
     Ok(())
