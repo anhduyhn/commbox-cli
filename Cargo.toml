@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 tokio = {version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"]}
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
