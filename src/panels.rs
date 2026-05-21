@@ -21,7 +21,7 @@ pub fn parse_panels_file(path: &PathBuf) -> Result<Vec<PanelEntry>> {
 
         if let Some(rest) = trimmed.strip_prefix('[') {
             if let Some(group) = rest.strip_suffix(']') {
-                current_group = group.trim().to_lowercase();
+                current_group = group.trim().to_string();
                 continue;
             }
         }
