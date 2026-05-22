@@ -1,0 +1,24 @@
+# CommBox panel inventory. Replace these placeholder addresses with your own.
+#
+# Format:
+#   [Group] headers create named sections used for "All panels in group" mode.
+#   One IP per line. Anything after `#` on the same line becomes the display name.
+#   Blank lines and full-line comments are ignored.
+#   Non-default ports can be specified inline, e.g. 192.168.1.50:5000
+
+[Building A]
+192.168.1.50      # BA-CBM-LIB
+192.168.1.51      # BA-CBM-101
+192.168.1.52      # BA-CBM-STAFF
+
+[Building B]
+192.168.2.50      # BB-CBM-A1
+192.168.2.51      # BB-CBM-A2
+
+[Building C]
+192.168.3.50      # BC-CBM-MAIN
+
+# Panels without a name work too; the IP is shown in menus instead.
+[Mobile carts]
+192.168.4.10
+192.168.4.11
